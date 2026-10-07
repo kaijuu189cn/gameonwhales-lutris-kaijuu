@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════════════════
+# browser-picker —— Wolf / Games-on-Whales Lutris 容器内的浏览器选择器
+#
+# 安装位置：/usr/local/bin/browser-picker（镜像固化，不被运行时卷覆盖）
+# 调用链：  战网等 Wine 程序 → winebrowser.exe → xdg-open → 本脚本 → 浏览器
+#
+# 用法：browser-picker <url>
+#
+# 添加/更换浏览器（无需重建镜像）：
+#     在持久卷里写 ~/.config/browser-picker.conf，例如：
+#         APP_DIR=/mnt/WD4/public/software/linux
+#         BROWSERS=(
+#           "Brave|Brave.AppImage --no-sandbox --new-window"
+#         )
+#     该文件会覆盖镜像内置的 APP_DIR / BROWSERS。
+#
+# ⚠ 切勿用字符串替换拼接 URL（如 cmd="${cmd//%u/$URL}"）：
+#     URL 里的 & 会被 bash 当作替换模式引用而损坏。
+# ═══════════════════════════════════════════════════════════════════════════
+set -u
+
+URL="${1:-}"
+if [ -z "$URL" ]; then
+  echo "usage: browser-picker <url>" >&2
+  exit 1
+fi
+
+# ── 运行环境（headless sway + Xwayland :0）─────────────────────────────────
+export HOME="${HOME:-/home/retro}"
+export DISPLAY="${DISPLAY:-:0}"
+export GDK_BACKEND=x11            # GTK 弹窗必须走 X11，否则 sway 不显示窗口
+export GTK_A11Y=none              # 抑制 "Failed to execute child process dbus-launch"
+# X 授权：仅当文件存在时设置（该路径只存在于战网的 pressure-vessel 命名空间内）
+[ -f /run/pressure-vessel/Xauthority ] && export XAUTHORITY=/run/pressure-vessel/Xauthority
+# DBus：优先继承（战网调用链已带），否则探测；切忌硬编码地址（每次启动都会变）
+if [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+  for _s in /tmp/dbus-*; do
+    [ -S "$_s" ] && { export DBUS_SESSION_BUS_ADDRESS="unix:path=$_s"; break; }
+  done
+fi
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/wolf}"
+
+# ── 浏览器清单（镜像内置默认；可被 ~/.config/browser-picker.conf 覆盖）─────
+# 格式： "显示名称|可执行文件名 附加参数"   —— URL 会作为最后一个参数自动追加
+APP_DIR="${APP_DIR:-/mnt/WD4/public/software/linux}"
+BROWSERS=(
+  "Firefox|firefox-149.0.r20260403140140-x86_64.AppImage --new-window --no-default-browser-check"
+  "Chromium|Chromium-stable-152.0.7977.64-x86_64.AppImage --no-sandbox --new-window"
+  "Google Chrome|Google-Chrome-stable-152.0.7977.64-1-x86_64.AppImage --no-sandbox --new-window"
+  "Microsoft Edge|Microsoft-Edge-stable-152.0.4191.53-1-x86_64.AppImage --no-sandbox --new-window"
+)
+
+# 持久卷覆盖配置（便于不重建镜像就增删浏览器）
+if [ -f "${HOME}/.config/browser-picker.conf" ]; then
+  # shellcheck disable=SC1090
+  . "${HOME}/.config/browser-picker.conf" || true
+fi
+
+# ── 弹窗选择（界面用英文：容器 locale 为 POSIX，中文会编码失败）───────────
+ZENITY_ARGS=(--list --title="Choose Browser" --text="Open URL with:" \
+             --column="Browser" --width=400 --height=300)
+for _e in "${BROWSERS[@]}"; do
+  ZENITY_ARGS+=("${_e%%|*}")
+done
+
+SELECTED="$(zenity "${ZENITY_ARGS[@]}" 2>/dev/null)" || true
+if [ -z "$SELECTED" ]; then
+  exit 1   # 用户取消
+fi
+
+# ── 启动所选浏览器（URL 独立传参，避免 & 被 shell/bash 替换语义破坏）──────
+for _e in "${BROWSERS[@]}"; do
+  _name="${_e%%|*}"
+  if [ "$_name" = "$SELECTED" ]; then
+    _cmd="${_e#*|}"
+    read -r -a _args <<< "$_cmd"
+    if [ ! -x "$APP_DIR/${_args[0]}" ]; then
+      zenity --error --text="浏览器不可执行：${_args[0]}\n（请检查共享盘是否挂载）" 2>/dev/null || true
+      exit 1
+    fi
+    case "$_name" in *Firefox*) export MOZ_ENABLE_WAYLAND=0 ;; esac
+    exec "$APP_DIR/${_args[0]}" "${_args[@]:1}" "$URL"
+  fi
+done
+
+echo "unknown choice: $SELECTED" >&2
+exit 1

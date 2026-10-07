@@ -1,0 +1,4 @@
+[Default Applications]
+x-scheme-handler/http=browser-picker.desktop
+x-scheme-handler/https=browser-picker.desktop
+text/html=browser-picker.desktop

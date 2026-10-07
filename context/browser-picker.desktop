@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Name=Browser Picker
+GenericName=Web Browser Chooser
+Comment=Choose which browser to open a link
+Exec=/usr/local/bin/browser-picker %u
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/http;x-scheme-handler/https;text/html;
+StartupNotify=false
+Categories=Network;WebBrowser;

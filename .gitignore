@@ -1,0 +1,16 @@
+# 验证用临时卷（verify-image.sh 会在本地创建，跑完自动清理）
+日志/
+*.log
+
+# docker build 中间产物
+.dockerignore.local
+
+# 编辑器
+.vscode/
+.idea/
+*~
+.DS_Store
+
+# verify-image.sh 的临时卷与结果
+.verify-volume/
+.verify-volume-result.txt
