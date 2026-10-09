@@ -64,3 +64,30 @@ docker exec -u retro WolfLutris_397584808901142269 vi ~/.local/bin/browser-picke
 ```
 
 > 注：本机无编辑器偏好时可用 `sed -i` 或把文件拷出改完再拷回（如 `产出/browser-picker.sh` 就是当前脚本副本，可编辑后 `docker cp` 回去）。
+
+---
+
+## 追加（2026-10-09）：还需要的第二个脚本
+
+仅装选择器**不足以**让战网打开浏览器：战网运行在 umu/Proton 的 pressure-vessel
+沙箱内，沙箱里的 `/usr/bin/xdg-open` 是 `steam-runtime-urlopen`，只会尝试 Steam
+管道与 D-Bus portal，本环境两者都不可用，请求根本到不了选择器。
+
+因此运行时部署要跑两个脚本：
+
+```bash
+./runtime/install-browser-picker.sh <容器名>   # 选择器 + .desktop + mimeapps
+./sandbox-bridge/install-bridge.sh  <容器名>   # 跨沙箱 URL 桥接（必需）
+```
+
+桥接装好后会写入 `~/.config/sway/custom-cfg`（持久卷），由 sway 在每次会话启动时
+自动重装沙箱代理并拉起守护进程，因此容器重启后无需手工干预。
+
+自检：
+
+```bash
+docker exec -u retro <容器> tail -20 /tmp/url-bridge.log
+```
+
+在战网里点击「使用浏览器完成登录」时，日志应出现
+`url-bridge: 收到 https://account.battlenet.com.cn/...`，随后弹出 Choose Browser。

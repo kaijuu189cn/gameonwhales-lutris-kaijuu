@@ -54,13 +54,23 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # ── 3. 固化文件 ───────────────────────────────────────────────────────────
-COPY context/browser-picker          /usr/local/bin/browser-picker
-COPY context/browser-picker.desktop  /usr/share/applications/browser-picker.desktop
-COPY context/mimeapps.list           /etc/xdg/mimeapps.list
-COPY context/90-browser-picker.sh    /opt/gow/startup.d/90-browser-picker.sh
+COPY context/browser-picker               /usr/local/bin/browser-picker
+COPY context/browser-picker.desktop       /usr/share/applications/browser-picker.desktop
+COPY context/mimeapps.list                /etc/xdg/mimeapps.list
+COPY context/90-browser-picker.sh         /opt/gow/startup.d/90-browser-picker.sh
+
+# 沙箱 URL 桥接：绕开 pressure-vessel 里那个只会失败的 steam-runtime-urlopen
+COPY sandbox-bridge/url-bridge-daemon.sh  /usr/local/bin/url-bridge-daemon.sh
+COPY sandbox-bridge/url-bridge-start.sh   /usr/local/bin/url-bridge-start.sh
+COPY sandbox-bridge/xdg-open-sandbox-proxy /usr/local/share/url-bridge/xdg-open-sandbox-proxy
+COPY context/91-url-bridge.sh             /opt/gow/startup.d/91-url-bridge.sh
 
 RUN chmod 0755 /usr/local/bin/browser-picker \
-               /opt/gow/startup.d/90-browser-picker.sh && \
+               /usr/local/bin/url-bridge-daemon.sh \
+               /usr/local/bin/url-bridge-start.sh \
+               /usr/local/share/url-bridge/xdg-open-sandbox-proxy \
+               /opt/gow/startup.d/90-browser-picker.sh \
+               /opt/gow/startup.d/91-url-bridge.sh && \
     chmod 0644 /etc/xdg/mimeapps.list \
                /usr/share/applications/browser-picker.desktop && \
     update-desktop-database /usr/share/applications 2>/dev/null || true
@@ -77,8 +87,7 @@ RUN chmod 0755 /usr/local/bin/browser-picker \
 #       mv /opt/browsers/firefox /opt/browsers/firefox-bin-dir && \
 #       ln -s /opt/browsers/firefox-bin-dir/firefox /opt/browsers/firefox && \
 #       rm -f /tmp/ff.tar.xz
-#   # 并把脚本里的 APP_DIR 指向 /opt/browsers，或在启动钩子里写
-#   #   ~/.config/browser-picker.conf → APP_DIR=/opt/browsers
+#   # 并在 ~/.config/browser-picker.conf 里写 PICKER_APP_DIR=/opt/browsers
 
 # ── 5. 自检（构建期快速验收，失败即构建失败）──────────────────────────────
 RUN set -eux; \
@@ -89,4 +98,9 @@ RUN set -eux; \
     grep -q 'x-scheme-handler/https=browser-picker.desktop' /etc/xdg/mimeapps.list; \
     command -v zenity >/dev/null; \
     command -v update-desktop-database >/dev/null; \
-    echo "browser-picker 固化自检通过"
+    test -x /usr/local/bin/url-bridge-daemon.sh; \
+    test -x /usr/local/bin/url-bridge-start.sh; \
+    test -s /usr/local/share/url-bridge/xdg-open-sandbox-proxy; \
+    test -x /opt/gow/startup.d/91-url-bridge.sh; \
+    grep -q 'PICKER_APP_DIR' /usr/local/bin/browser-picker; \
+    echo "browser-picker + 沙箱 URL 桥接 固化自检通过"

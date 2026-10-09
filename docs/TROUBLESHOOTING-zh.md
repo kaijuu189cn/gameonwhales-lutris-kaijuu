@@ -142,3 +142,69 @@ x-scheme-handler/https=firefox.desktop   ← firefox 自动写入
 - firefox（及 chrome 系浏览器）首次运行会主动设默认浏览器，覆盖 mimeapps.list
 - 加了 `--no-default-browser-check` 后不会覆盖
 - 以后新增浏览器到 picker 时，记得给会"抢默认"的浏览器加该参数
+
+---
+
+## 追加（2026-10-09）：战网"点了完全没反应"的两个真因
+
+前几轮修好的是**容器层面**的问题（浏览器未注册、抢默认、URL 传参）。但用户在实际
+战网里点击"使用浏览器完成登录"时依然毫无反应。深挖后找到两个更底层的原因。
+
+### 真因 A：pressure-vessel 沙箱里的 xdg-open 被换掉了
+
+战网进程运行在 umu/Proton 的 pressure-vessel 沙箱内。进入它的挂载命名空间观察：
+
+```bash
+P=$(pgrep -f Battle.net.exe | head -1)
+nsenter -t $P -m -- ls -la /usr/bin/xdg-open /usr/bin/zenity
+# ls: cannot access '/usr/bin/zenity': No such file or directory
+# lrwxrwxrwx  /usr/bin/xdg-open -> steam-runtime-urlopen
+```
+
+沙箱内的 `xdg-open` 不是 freedesktop 的 xdg-open，而是 `steam-runtime-urlopen`：
+
+```bash
+nsenter -t $P -m -- env HOME=/home/retro DISPLAY=:0 xdg-open https://example.com
+# steam-runtime-urlopen: Unable to open URL
+# steam-runtime-urlopen: tried using steam.pipe, received error: Steam is not running
+# steam-runtime-urlopen: tried using xdg-desktop-portal, received error: Unable to connect to D-Bus session bus
+```
+
+它只走两条路：Steam 管道（Steam 没运行）与 D-Bus portal（沙箱内没有可用会话总线
+——战网进程的 `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/pressure-vessel/bus` 已关闭）。
+两条都失败 → 直接放弃 → **我们注册的 browser-picker 永远不会被调用**。
+
+而且沙箱内无法就地弹窗：容器的 zenity 虽可通过 `/run/host/usr/bin/zenity` 看到，
+但因缺 `libadwaita-1.so.0` 等容器库而无法运行；容器自己的 `xdg-open` 脚本也因缺
+`xdg-mime` 而失败。
+
+**解法：跨沙箱桥接**（`sandbox-bridge/`）
+
+- 找到注入点：Wine 进程的 `PATH` 第一项是 Proton 的
+  `.../common/Proton 11.0/files/bin`，该目录在持久挂载 steamapps 上且**可写**。
+  实验证实 `winebrowser` 会按 `PATH` 解析 `xdg-open`（放一个探针脚本进去即被调用）。
+- 沙箱内代理：把 http(s) URL 写进共享 FIFO（以 `O_RDWR` 打开，不会阻塞）。
+- 沙箱外守护进程：读 FIFO → 调 `browser-picker` → 弹选择器 → 启动浏览器。
+- 持久化：`~/.config/sway/custom-cfg`（被 sway 主配置 include，且在持久卷）在每次
+  会话启动时调用 `url-bridge-start.sh`，重装代理并重启守护进程。
+
+### 真因 B：`APP_DIR` 环境变量被 GOW 占用
+
+修复 A 之后，桥接日志能收到战网的真实 URL，但选择器弹不出来。用 `bash -x` 追踪
+包装器后看到：
+
+```
++21: APP_DIR=/opt/gow/app
+```
+
+GOW 容器本身设置了 `APP_DIR=/opt/gow/app`（Gamepad UI 用），而选择器脚本写的是
+`APP_DIR="${APP_DIR:-/mnt/WD4/public/software/linux}"` —— 于是它去 GOW 目录找浏览器，
+找不到、弹错误框、退出。**环境变量污染。**
+
+**解法**：脚本改用私有变量名 `PICKER_APP_DIR`；并增加文件名模糊匹配
+（浏览器升级换版本号后仍能找到）。
+
+### 验证
+
+沙箱内触发 → 桥接日志出现战网真实 URL → 弹出 Choose Browser → 选择后浏览器打开
+战网登录页 → 完成登录，页面显示"现在可以返回战网游戏或应用程序"。

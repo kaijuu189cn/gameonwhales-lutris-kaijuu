@@ -1,0 +1,8 @@
+# ── 自定义 sway 配置片段 ──────────────────────────────────────────────────
+# 安装到 ~/.config/sway/custom-cfg（该文件已被 ~/.config/sway/config 的
+#   include /home/retro/.config/sway/custom-cfg
+# 引入，而 ~/.config 位于持久卷，容器重启后仍生效）。
+#
+# 作用：会话启动时部署并拉起「沙箱 URL 桥接」，
+#       让跑在 pressure-vessel 沙箱内的战网等程序能打开浏览器。
+exec /home/retro/.local/bin/url-bridge-start.sh
